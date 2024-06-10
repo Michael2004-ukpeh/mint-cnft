@@ -1,8 +1,9 @@
-[toolchain]
+ [toolchain]
 
 [features]
 resolution = true
 skip-lint = false
+seeds = false
 
 [programs.localnet]
 skytrade_task = "29nNP89hXMhh4FkQiAaRv8vNUucaUzjURQC4sbm4F6Ax"

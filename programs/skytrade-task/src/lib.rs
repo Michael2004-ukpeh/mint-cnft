@@ -5,7 +5,7 @@ use anchor_spl::{
     metadata::{
         create_master_edition_v3, create_metadata_accounts_v3,
         set_and_verify_sized_collection_item, sign_metadata, CreateMasterEditionV3,
-        CreateMetadataAccountsV3, Metadata, SetAndVerifySizedCollectionItem, SignMetadata,
+        CreateMetadataAccountsV3, Metadata, SignMetadata,
     },
     token::{mint_to, Mint, MintTo, Token, TokenAccount},
 };
@@ -17,50 +17,48 @@ declare_id!("29nNP89hXMhh4FkQiAaRv8vNUucaUzjURQC4sbm4F6Ax");
 
 #[program]
 pub mod skytrade_task {
-    use mpl_token_metadata::types::DataV2;
+    
 
     use super::*;
-    pub fn create_nft_collection(ctx: Context<CreateCollection>) -> Result<()> {
-        // PDA for signing
-        let signer_seeds: &[&[&[u8]]] = &[&[
-            b"Collection",
-            &[*ctx.bumps.get("collection_mint").unwrap()],
-        ]];
+    pub fn create_nft_collection(ctx: Context<CreateCollection>, data:MintData) -> Result<()> {
+      
 
         // mint collection nft
         mint_to(
-            CpiContext::new_with_signer(
+            CpiContext::new(
                 ctx.accounts.token_program.to_account_info(),
                 MintTo {
                     mint: ctx.accounts.collection_mint.to_account_info(),
                     to: ctx.accounts.token_account.to_account_info(),
-                    authority: ctx.accounts.collection_mint.to_account_info(),
-                },
-                signer_seeds,
+                    authority: ctx.accounts.authority.to_account_info(),
+                }
+            
             ),
             1,
         )?;
 
+
         // create metadata account for collection nft
+        let metadata_cpi_ctx=       CpiContext::new(
+            ctx.accounts.token_metadata_program.to_account_info(),
+            CreateMetadataAccountsV3 {
+                metadata: ctx.accounts.metadata_account.to_account_info(),
+                mint: ctx.accounts.collection_mint.to_account_info(),
+                mint_authority: ctx.accounts.authority.to_account_info(), // use pda mint address as mint authority
+                update_authority: ctx.accounts.authority.to_account_info(), // use pda mint as update authority
+                payer: ctx.accounts.authority.to_account_info(),
+                system_program: ctx.accounts.system_program.to_account_info(),
+                rent: ctx.accounts.rent.to_account_info(),
+            }
+            
+        );
         create_metadata_accounts_v3(
-            CpiContext::new_with_signer(
-                ctx.accounts.token_metadata_program.to_account_info(),
-                CreateMetadataAccountsV3 {
-                    metadata: ctx.accounts.metadata_account.to_account_info(),
-                    mint: ctx.accounts.collection_mint.to_account_info(),
-                    mint_authority: ctx.accounts.collection_mint.to_account_info(), // use pda mint address as mint authority
-                    update_authority: ctx.accounts.collection_mint.to_account_info(), // use pda mint as update authority
-                    payer: ctx.accounts.authority.to_account_info(),
-                    system_program: ctx.accounts.system_program.to_account_info(),
-                    rent: ctx.accounts.rent.to_account_info(),
-                },
-                &signer_seeds,
-            ),
+           metadata_cpi_ctx,
             DataV2 {
-                name: name,
-                symbol: symbol,
-                uri: uri,
-                seller_fee_basis_points: 0,
+                name: data.name,
+                symbol: data.symbol,
+                uri: data.uri,
+                seller_fee_basis_points: data.seller_basis_points,
                 creators: Some(vec![Creator {
                     address: ctx.accounts.authority.key(),
                     verified: false,
@@ -75,30 +73,98 @@ pub mod skytrade_task {
         )?;
 
         // create master edition account for collection nft
+        let master_edition_cpi_ctx=        CpiContext::new(
+            ctx.accounts.token_metadata_program.to_account_info(),
+            CreateMasterEditionV3 {
+                payer: ctx.accounts.authority.to_account_info(),
+                mint: ctx.accounts.collection_mint.to_account_info(),
+                edition: ctx.accounts.master_edition.to_account_info(),
+                mint_authority: ctx.accounts.authority.to_account_info(),
+                update_authority: ctx.accounts.authority.to_account_info(),
+                metadata: ctx.accounts.metadata_account.to_account_info(),
+                token_program: ctx.accounts.token_program.to_account_info(),
+                system_program: ctx.accounts.system_program.to_account_info(),
+                rent: ctx.accounts.rent.to_account_info(),
+            }
+            
+        );
         create_master_edition_v3(
-            CpiContext::new_with_signer(
-                ctx.accounts.token_metadata_program.to_account_info(),
-                CreateMasterEditionV3 {
-                    payer: ctx.accounts.authority.to_account_info(),
-                    mint: ctx.accounts.collection_mint.to_account_info(),
-                    edition: ctx.accounts.master_edition.to_account_info(),
-                    mint_authority: ctx.accounts.collection_mint.to_account_info(),
-                    update_authority: ctx.accounts.collection_mint.to_account_info(),
-                    metadata: ctx.accounts.metadata_account.to_account_info(),
-                    token_program: ctx.accounts.token_program.to_account_info(),
-                    system_program: ctx.accounts.system_program.to_account_info(),
-                    rent: ctx.accounts.rent.to_account_info(),
-                },
-                &signer_seeds,
-            ),
+            master_edition_cpi_ctx,
             Some(0),
         )?;
+        // verify creator on metadata account
+        sign_metadata(CpiContext::new(
+         ctx.accounts.token_metadata_program.to_account_info(),
+            SignMetadata {
+                    creator: ctx.accounts.authority.to_account_info(),
+                    metadata: ctx.accounts.metadata_account.to_account_info(),
+                },
+            ))?;
         Ok(())
     }
     pub fn initialze_merkle_tree(ctx: Context<InitMerkle>, max_depth:u32, max_buffer_size:u32) -> Result<()> {
+        let tree_cpi_ctx = CpiContext::new(
+            ctx.accounts.bubblegum_program.to_account_info(),
+            CreateTree {
+                tree_authority: ctx.accounts.tree_authority.to_account_info(),
+                merkle_tree: ctx.accounts.merkle_tree.to_account_info(),
+                payer: ctx.accounts.authority.to_account_info(),
+                tree_creator: ctx.accounts.authority.to_account_info(), // set creator as pda
+                log_wrapper: ctx.accounts.log_wrapper.to_account_info(),
+                compression_program: ctx.accounts.compression_program.to_account_info(),
+                system_program: ctx.accounts.system_program.to_account_info(),
+            }
+           
+        );
+        create_tree(tree_cpi_ctx,max_depth, max_buffer_size, Option::from(false))?;
         Ok(())
     }
     pub fn mint_cnft_to_collection(ctx: Context<MintCNFT>, data: MintData) -> Result<()> {
+        let metadata = MetadataArgs{
+            name: data.name,
+            symbol:data.symbol,
+            collection: Some(Collection {
+                key: ctx.accounts.collection_mint.key(),
+                verified: false,
+            }),
+            primary_sale_happened: false,
+            is_mutable: true,
+            edition_nonce: None,
+            token_standard: Some(TokenStandard::NonFungible),
+            uses: None,
+            token_program_version: TokenProgramVersion::Original,
+            creators: vec![Creator {
+                address: ctx.accounts.authority.key(), // set creator as pda
+                verified: true,
+                share: 100,
+            }],
+            seller_fee_basis_points: 0,
+
+        };
+        let mint_cnft_to_collection_accounts = MintToCollectionV1{
+            tree_authority: ctx.accounts.tree_authority.to_account_info(),
+            leaf_owner: ctx.accounts.authority.to_account_info(),
+            leaf_delegate: ctx.accounts.authority.to_account_info(),
+            merkle_tree: ctx.accounts.merkle_tree.to_account_info(),
+            payer: ctx.accounts.payer.to_account_info(),
+            tree_delegate: ctx.accounts.authority.to_account_info(), // tree delegate is pda, required as a signer
+            collection_authority: ctx.accounts.authority.to_account_info(), // collection authority is pda (nft metadata update authority)
+            collection_authority_record_pda: ctx.accounts.bubblegum_program.to_account_info(),
+            collection_mint: ctx.accounts.collection_mint.to_account_info(), // collection nft mint account
+            collection_metadata: ctx.accounts.collection_metadata.to_account_info(), // collection nft metadata account
+            edition_account: ctx.accounts.edition_account.to_account_info(), // collection nft master edition account
+            bubblegum_signer: ctx.accounts.bubblegum_signer.to_account_info(),
+            log_wrapper: ctx.accounts.log_wrapper.to_account_info(),
+            compression_program: ctx.accounts.compression_program.to_account_info(),
+            token_metadata_program: ctx.accounts.token_metadata_program.to_account_info(),
+            system_program: ctx.accounts.system_program.to_account_info(),
+        };
+        let mint_cnft_to_collection_ctx = CpiContext::new(
+            ctx.accounts.bubblegum_program.to_account_info(),
+            mint_cnft_to_collection_accounts
+        );
+        mint_to_collection(mint_cnft_to_collection_ctx,metadata)?;
+        msg!("Nft Minted to collection");
         Ok(())
     }
 }
@@ -108,13 +174,11 @@ pub struct CreateCollection<'info> {
     pub authority: Signer<'info>,
 
     #[account(
-        init_if_needed,
-        seeds = [b"collection"],
-        bump,
+        init,
         payer = authority,
         mint::decimals = 0,
-        mint::authority = collection_mint,
-        mint::freeze_authority = collection_mint
+        mint::authority = authority,
+        mint::freeze_authority = authority
     )]
     pub collection_mint: Account<'info, Mint>,
 
@@ -124,14 +188,12 @@ pub struct CreateCollection<'info> {
         address=find_metadata_account(&collection_mint.key()).0
     )]
     pub metadata_account: UncheckedAccount<'info>,
-
     /// CHECK:
     #[account(
         mut,
         address=find_master_edition_account(&collection_mint.key()).0
     )]
     pub master_edition: UncheckedAccount<'info>,
-
     #[account(
         init_if_needed,
         payer = authority,
@@ -139,7 +201,6 @@ pub struct CreateCollection<'info> {
         associated_token::authority = authority
     )]
     pub token_account: Account<'info, TokenAccount>,
-
     pub system_program: Program<'info, System>,
     pub token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, AssociatedToken>,
@@ -150,19 +211,38 @@ pub struct CreateCollection<'info> {
 #[derive(Accounts)]
 pub struct InitMerkle<'info> {
     #[account(mut)]
-    payer:signer<'info>,
-    
-}
-#[derive(Accounts)]
-pub struct MintCNFT<'info> {
-    pub payer: Signer<'info>,
+    authority:Signer<'info>,
+    /// CHECK:
     #[account(
         mut,
-        seeds = [],
-        seeds::program,
+        seeds = [merkle_tree.key().as_ref()],
+        bump,
+        seeds::program = bubblegum_program.key()
+    )]
+    pub tree_authority: UncheckedAccount<'info>,
+    /// CHECK:
+    #[account(mut)]
+    pub merkle_tree: UncheckedAccount<'info>,
+    pub log_wrapper: Program<'info, Noop>,
+    pub system_program: Program<'info, System>,
+    pub bubblegum_program: Program<'info, Bubblegum>,
+    pub compression_program: Program<'info, SplAccountCompression>,
+}
+
+#[derive(Accounts)]
+pub struct MintCNFT<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [merkle_tree.key().as_ref()],
+        seeds::program = bubblegum_program.key(),
         bump,
     )]
     pub tree_authority: Box<Account<'info, TreeConfig>>,
+    #[account(mut)]
+    /// CHECK: unsafe
+    pub merkle_tree: UncheckedAccount<'info>,
 
     /// CHECK: This account is neither written to nor read from.
     pub leaf_owner: AccountInfo<'info>,
@@ -170,9 +250,7 @@ pub struct MintCNFT<'info> {
     /// CHECK: This account is neither written to nor read from.
     pub leaf_delegate: AccountInfo<'info>,
 
-    #[account(mut)]
-    /// CHECK: unsafe
-    pub merkle_tree: UncheckedAccount<'info>,
+
     pub tree_delegate: Signer<'info>,
     pub collection_authority: Signer<'info>,
 
@@ -182,7 +260,7 @@ pub struct MintCNFT<'info> {
     pub collection_authority_record_pda: UncheckedAccount<'info>,
 
     /// CHECK: This account is checked in  the instruction
-    pub collection_mint: UncheckedAccount<'info>,
+    pub collection_mint: Account<'info, Mint>,
 
     #[account(mut)]
     pub collection_metadata: Box<Account<'info, TokenMetadata>>,
@@ -192,7 +270,7 @@ pub struct MintCNFT<'info> {
 
     /// CHECK: This is just used as a signing PDA.
     #[account(
-        seeds = [COLLECTION_CPI_PREFIX.as_ref()],
+        seeds = ["collection_cpi".as_bytes()],
         seeds::program = bubblegum_program.key(),
         bump,
     )]
@@ -210,10 +288,4 @@ struct MintData {
     uri: String,
     name: String,
     symbol: String,
-    creator_share: i32,
-    verified: bool,
-    seller_basis_points: i32,
-    primary_sale_has_happened: bool,
-    is_mutable: bool,
-    edition_nonce: i32,
 }
